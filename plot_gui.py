@@ -2,6 +2,9 @@
 #-------------------------------------------------------------------------------
 #Rev.1.4 新增日期時間增減功能
 #Rev.2.0 新增光棒移動來設定計算範圍,將圖表改為內崁式,新增能耗計算模組
+#Rev.2.1 繪製新數據前，確保所有相關軸都被正確清除和重置
+#Rev.2.2 修正語法錯誤,圖表比例改為7:3
+#Rev.2.3 修改on/off低標,圖表尺寸加大,修正效率基準百分比分母,計算結果增加最大最小值
 #-------------------------------------------------------------------------------
 # 
 import tkinter as tk
@@ -9,11 +12,18 @@ from tkinter import ttk, filedialog, messagebox
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
-from matplotlib.dates import DateFormatter
+from matplotlib.ticker import MaxNLocator
 from matplotlib import rcParams
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from matplotlib.backends.backend_tkagg import NavigationToolbar2Tk
+from matplotlib.backends._backend_tk import NavigationToolbar2Tk
 import sys  # 引入 sys 模組以便退出程式
+import os
+
+def resource_path(relative_path):
+    """ 獲取資源的絕對路徑 """
+    if hasattr(sys, '_MEIPASS'):
+        return os.path.join(getattr(sys, '_MEIPASS'), relative_path)
+    return os.path.join(os.path.abspath('.'), relative_path)
 
 class EnergyCalculator:
     def __init__(self):
@@ -198,16 +208,16 @@ class EnergyCalculator:
             final_percent = round(ef_value / thresholds[0] * 100, 1)
         elif ef_value >= thresholds[1]:
             grade = "2級"
-            final_percent = round(ef_value / thresholds[1] * 100, 1)
+            final_percent = round(ef_value / thresholds[0] * 100, 1)
         elif ef_value >= thresholds[2]:
             grade = "3級"
-            final_percent = round(ef_value / thresholds[2] * 100, 1)
+            final_percent = round(ef_value / thresholds[0] * 100, 1)
         elif ef_value >= thresholds[3]:
             grade = "4級"
-            final_percent = round(ef_value / thresholds[3] * 100, 1)
+            final_percent = round(ef_value / thresholds[0] * 100, 1)
         else :
             grade = "5級"
-            final_percent = round(ef_value / thresholds[3] * 100, 1)
+            final_percent = round(ef_value / thresholds[0] * 100, 1)
         
         return final_percent, grade
     
@@ -221,16 +231,16 @@ class EnergyCalculator:
             final_percent = round(ef_value / thresholds[0] * 100, 1)
         elif ef_value >= thresholds[1]:
             grade = "2級"
-            final_percent = round(ef_value / thresholds[1] * 100, 1)
+            final_percent = round(ef_value / thresholds[0] * 100, 1)
         elif ef_value >= thresholds[2]:
             grade = "3級"
-            final_percent = round(ef_value / thresholds[2] * 100, 1)
+            final_percent = round(ef_value / thresholds[0] * 100, 1)
         elif ef_value >= thresholds[3]:
             grade = "4級"
-            final_percent = round(ef_value / thresholds[3] * 100, 1)
+            final_percent = round(ef_value / thresholds[0] * 100, 1)
         else :
             grade = "5級"
-            final_percent = round(ef_value / thresholds[3] * 100, 1)
+            final_percent = round(ef_value / thresholds[0] * 100, 1)
         
         return final_percent, grade
 
@@ -277,18 +287,45 @@ class DraggableLine:
         if self.date_var is not None and self.time_var is not None:
             dt = mdates.num2date(x_pos)
             self.date_var.set(dt.strftime('%Y-%m-%d'))
-            self.time_var.set(dt.strftime('%H:%M'))
+            self.time_var.set(dt.strftime('%H:%M:%S'))
 
-# 修改plot_chart函數，在繪製圖表後添加光棒
 def plot_chart():
     ax1_color = "lightcyan"
     ax2_color = "lightyellow"
     try:
-        # 讀取 CSV 檔案
-        df = pd.read_csv(csv_path.get())
+        global ax1, ax2, ax2a, ax2b, ax2c
         
+        # 清除現有繪圖
+        fig.clf()
+
+        # 重新建立 gridspec 與子圖，保留 7:3 高度比例
+        gs = fig.add_gridspec(2, 1, height_ratios=[7, 3])
+        ax1 = fig.add_subplot(gs[0, 0], facecolor=ax1_color)
+        ax2 = fig.add_subplot(gs[1, 0], sharex=ax1, facecolor=ax2_color)
+        
+        # 清除右側的雙 Y 軸
+        for ax in fig.axes:
+            if ax not in [ax1, ax2]:
+                ax.remove()
+        
+        # 重新創建右側 Y 軸
+        ax2a = ax2  # 左側 Y 軸 (功率 P(W))
+        ax2b = ax2.twinx()  # 右側第一個 Y 軸 (電壓 U(V))
+        ax2c = ax2.twinx()  # 右側第二個 Y 軸 (電流 I(A))
+        
+        # 調整右側第二個 Y 軸的位置
+        ax2c.spines['right'].set_position(('outward', 35))
+
+        # 讀取 CSV 檔案（指定編碼以支援中文欄位）
+        try:
+            df = pd.read_csv(csv_path.get(), encoding="utf-8-sig")
+        except UnicodeDecodeError:
+            df = pd.read_csv(csv_path.get(), encoding="big5")
         # 合併 Date 和 Time 欄位為 datetime
         df['datetime'] = pd.to_datetime(df['Date'] + ' ' + df['Time'])
+
+        # 去除第一筆資料為空白的欄位
+        df = df.dropna(how='all', axis=1)
         
         # 檢查是否有 U(V), I(A), P(W), WP(Wh) 欄位，若無則補上並填入 0
         required_columns = ['U(V)', 'I(A)', 'P(W)', 'WP(Wh)']
@@ -305,13 +342,9 @@ def plot_chart():
             return
         
         # 其餘欄位視為溫度資料
-        temp_columns = [col for col in df.columns if col not in ['Date', 'Time', 'datetime', 'WP(Wh)'] + power_columns]
+        temp_columns = [col for col in df.columns if col not in ['Date', 'Time', 'datetime'] + required_columns]
         df_temp = df[['datetime'] + temp_columns]
         
-        # 清除舊圖表
-        ax1.clear()
-        ax2.clear()
-
         # 繪製圖表
         fig.suptitle(chart_title.get())
         
@@ -319,52 +352,40 @@ def plot_chart():
         for col in temp_columns:
             ax1.plot(df_temp['datetime'], df_temp[col], label=col)
         ax1.set_ylabel("溫度")
-        #ax1.legend()
+
+        ax1.legend(temp_columns, loc='upper left')
         ax1.set_facecolor(ax1_color)
         ax1.grid(True, linestyle='dashdot')
+        ax1.tick_params(axis='x', which='both', bottom=False, top=False, labelbottom=False)
         
         # 繪製電力資料
-        ax2a = ax2  # 左側 Y 軸 (功率 P(W))
-        ax2b = ax2.twinx()  # 右側第一個 Y 軸 (電壓 U(V))
-        ax2c = ax2.twinx()  # 右側第二個 Y 軸 (電流 I(A))
-
-        # 調整右側第二個 Y 軸的位置
-        ax2c.spines['right'].set_position(('outward', 60))
-
-        # 繪製 'P(W)' 資料在左側 Y 軸
         ax2a.plot(df_power['datetime'], df_power['P(W)'], label='P(W)', color='green')
         ax2a.set_ylabel("功率 (P)", color='green')
         ax2a.tick_params(axis='y', labelcolor='green')
         ax2a.grid(True, linestyle='dashdot')
 
-        # 繪製 'U(V)' 資料在右側第一個 Y 軸
         ax2b.plot(df_power['datetime'], df_power['U(V)'], label='U(V)', color='blue')
         ax2b.set_ylabel("電壓 (U)", color='blue')
         ax2b.tick_params(axis='y', labelcolor='blue')
-        ax2b.set_ylim(0, 120)  # 設定 Y 軸範圍為 0 到 120
+        ax2b.set_ylim(0, 120)
 
-        # 繪製 'I(A)' 資料在右側第二個 Y 軸
         ax2c.plot(df_power['datetime'], df_power['I(A)'], label='I(A)', color='red')
         ax2c.set_ylabel("電流 (I)", color='red')
         ax2c.tick_params(axis='y', labelcolor='red')
 
-        # 設定背景顏色
         ax2.set_facecolor(ax2_color)
-
-        # 設定 X 軸格式
-        ax2.xaxis.set_major_formatter(DateFormatter("%m-%d %H:%M"))
-        ax2.xaxis.set_major_locator(plt.MaxNLocator(10))  # 限制 X 軸最多顯示 10 個標籤
+        ax2.xaxis.set_major_locator(MaxNLocator(10))
         plt.setp(ax2.xaxis.get_majorticklabels(), rotation=45)
         plt.tight_layout()
+        # 設定 ax2 的 x 軸 datetime 顯示格式為 "d-hh:mm"
+        ax2.xaxis.set_major_formatter(mdates.DateFormatter('%d-%H:%M'))
+        ax2.set_xlim(ax1.get_xlim())
 
         # 添加可拖動的光棒
-        global start_line, end_line  # 聲明為全域變數以便在其他函數中訪問
-        
-        # 獲取開始和結束時間
+        global start_line, end_line
         start_pos = pd.to_datetime(f"{start_date.get()} {start_time.get()}")
         end_pos = pd.to_datetime(f"{end_date.get()} {end_time.get()}")
         
-        # 創建可拖動的光棒，並傳遞對應的文字框變數
         start_line = DraggableLine(ax1, df_temp['datetime'], df_temp[temp_columns[0]], 
                                  start_pos, color='blue', linestyle='--',
                                  date_var=start_date, time_var=start_time)
@@ -372,8 +393,8 @@ def plot_chart():
                                end_pos, color='red', linestyle='--',
                                date_var=end_date, time_var=end_time)
         
-        # 更新嵌入的圖表
         canvas.draw()
+        toolbar.update()
 
     except Exception as e:
         messagebox.showerror("錯誤", f"繪製圖表時發生錯誤：{e}")
@@ -381,7 +402,10 @@ def plot_chart():
 def calculate_statistics():
     try:
         # 讀取 CSV 檔案
-        df = pd.read_csv(csv_path.get())
+        try:
+            df = pd.read_csv(csv_path.get(), encoding="utf-8-sig")
+        except UnicodeDecodeError:
+            df = pd.read_csv(csv_path.get(), encoding="big5")
         
         # 合併 Date 和 Time 欄位為 datetime
         df['datetime'] = pd.to_datetime(df['Date'] + ' ' + df['Time'])
@@ -407,12 +431,17 @@ def calculate_statistics():
 
         # 計算平均值
         averages = filtered_df.mean(numeric_only=True)
+        # 計算最大值
+        max_values = filtered_df.max(numeric_only=True)
+        # 計算最小值
+        min_values = filtered_df.min(numeric_only=True)
 
         # 計算電力啟停周期
         power_column = 'P(W)'
+        power_throttle = float(on_off_throttle_entry_var.get())
         if power_column in filtered_df.columns:
             # 確保正確建立 power_on 欄位
-            filtered_df.loc[:, 'power_on'] = filtered_df[power_column] >= 3
+            filtered_df.loc[:, 'power_on'] = filtered_df[power_column] >= power_throttle
 
             # 計算啟停周期次數
             power_cycles = int(filtered_df['power_on'].astype(int).diff().fillna(0).abs().sum() // 2)
@@ -491,12 +520,17 @@ def calculate_statistics():
         # 顯示結果
         result_textbox.delete(1.0, tk.END)  # 清空文字框
         result_textbox.insert(tk.END, f"統計範圍：{start} ~ {end}\n")
-        result_textbox.insert(tk.END, "平均值計算：\n")
-        for column, avg in averages.items():
-            result_textbox.insert(tk.END, f"{column}: {avg:.2f}\n")
-        result_textbox.insert(tk.END, f"\nON / Off 周期次數：{power_cycles}\n")
-        result_textbox.insert(tk.END, f"On 的平均時間: {above_avg_time:.1f} 分\n" if above_count > 0 else "P(W) >= 3 的平均時間: 無資料\n")
-        result_textbox.insert(tk.END, f"Off 的平均時間: {below_avg_time:.1f} 分\n" if below_count > 0 else "P(W) < 3 的平均時間: 無資料\n")
+        result_textbox.insert(tk.END, "平均/最大/最小：\n")
+        # 整合平均值、最大值、最小值為一行輸出
+        for column in averages.index:
+            avg = averages[column]
+            max_v = max_values[column]
+            min_v = min_values[column]
+            result_textbox.insert(tk.END, f"{column}: {avg:.1f} / {max_v:.1f} / {min_v:.1f}\n")
+        result_textbox.insert(tk.END, f"\nON / Off 低標：{power_throttle}\n")
+        result_textbox.insert(tk.END, f"ON / Off 周期次數：{power_cycles}\n")
+        result_textbox.insert(tk.END, f"On 的平均時間: {above_avg_time:.1f} 分\n" if above_count > 0 else f"P(W) >= {power_throttle} 的平均時間: 無資料\n")
+        result_textbox.insert(tk.END, f"Off 的平均時間: {below_avg_time:.1f} 分\n" if below_count > 0 else f"P(W) < {power_throttle} 的平均時間: 無資料\n")
         result_textbox.insert(tk.END, f"On / Off 百分比: {above_percentage:.2f}%\n")
         result_textbox.insert(tk.END, f"\n電力消耗：{wp_difference:.2f} w / {minutes_difference} 分\n")
         result_textbox.insert(tk.END, f"24 小時電力消耗：{wp_24h_difference:.1f} w\n")
@@ -532,6 +566,7 @@ def save_results():
     except Exception as e:
         messagebox.showerror("錯誤", f"儲存結果時發生錯誤：{e}")
 
+
 # 選擇檔案的函數
 def select_file():
     file_path = filedialog.askopenfilename(filetypes=[("CSV files", "*.csv")])
@@ -539,8 +574,10 @@ def select_file():
         csv_path.set(file_path)
         try:
             # 讀取 CSV 檔案
-            df = pd.read_csv(file_path)
-            
+            try:
+                df = pd.read_csv(file_path, encoding="utf-8-sig")
+            except UnicodeDecodeError:
+                df = pd.read_csv(file_path, encoding="big5")
             # 檢查是否有 Date 和 Time 欄位
             if 'Date' in df.columns and 'Time' in df.columns:
                 # 合併 Date 和 Time 欄位為 datetime
@@ -548,9 +585,9 @@ def select_file():
                 
                 # 設定開始和結束日期時間
                 start_date.set(df['datetime'].iloc[0].strftime('%Y-%m-%d'))
-                start_time.set(df['datetime'].iloc[0].strftime('%H:%M'))
+                start_time.set(df['datetime'].iloc[0].strftime('%H:%M:%S'))
                 end_date.set(df['datetime'].iloc[-1].strftime('%Y-%m-%d'))
-                end_time.set(df['datetime'].iloc[-1].strftime('%H:%M'))
+                end_time.set(df['datetime'].iloc[-1].strftime('%H:%M:%S'))
             else:
                 messagebox.showerror("錯誤", "CSV 檔案缺少 Date 或 Time 欄位！")
 
@@ -562,6 +599,7 @@ def select_file():
 
         except Exception as e:
             messagebox.showerror("錯誤", f"處理 CSV 檔案時發生錯誤：{e}")
+            print(f"Select_file: err：{e}")
 
 # 定義視窗關閉事件處理函數
 def on_closing():
@@ -573,16 +611,22 @@ def on_closing():
 # 設定 matplotlib 使用的字體
 rcParams['font.sans-serif'] = ['Microsoft JhengHei']  # 使用微軟正黑體
 rcParams['axes.unicode_minus'] = False  # 解決負號無法顯示的問題
+rcParams['font.size'] = 8
+rcParams['axes.titlesize'] = 8      # 座標軸標題字體大小
+rcParams['axes.labelsize'] = 8      # 座標軸標籤字體大小
+rcParams['xtick.labelsize'] = 8     # X軸刻度字體大小
+rcParams['ytick.labelsize'] = 8     # Y軸刻度字體大小
+rcParams['legend.fontsize'] = 8     # 圖例字體大小
+rcParams['figure.titlesize'] = 12    # 圖形標題字體大小
 
 # 初始化主視窗
 root = tk.Tk()
-root.title("CSV Plotter with Statistics 2.0")
+root.title("CSV Plotter with Statistics 2.3")
+root.iconbitmap(resource_path('favicon.ico'))
 
 # 全域變數
 csv_path = tk.StringVar()
 chart_title = tk.StringVar()
-start_datetime = tk.StringVar()
-end_datetime = tk.StringVar()
 start_date = tk.StringVar()
 start_time = tk.StringVar()
 end_date = tk.StringVar()
@@ -613,7 +657,7 @@ result_textbox = tk.Text(
     height=30, 
     wrap=tk.WORD  # 自動換行
 )
-result_textbox.grid(row=0, rowspan=12, column=0, padx=5, pady=5)
+result_textbox.grid(row=0, rowspan=13, column=0, padx=5, pady=5)
 
 # 能耗計算用欄位
 tk.Label(result_frame, text="能耗計算用:").grid(row=0, column=1, columnspan=2, padx=5, pady=5, sticky="nsew")
@@ -636,11 +680,19 @@ temp_r_entry.grid(row=4, column=2, padx=5, pady=5, sticky="w")
 fan_type_var = tk.IntVar(value=1)  # 0: unchecked, 1: checked
 fan_type_checkbox = tk.Checkbutton(result_frame, text="風扇式", variable=fan_type_var)
 fan_type_checkbox.grid(row=5, column=1, padx=5, pady=5, sticky="w")
+tk.Label(result_frame, text="R:").grid(row=3, column=2, padx=5, pady=5, sticky="w")
+temp_r_entry_var = tk.StringVar(value="3.0")
+temp_r_entry = tk.Entry(result_frame, width=5, textvariable=temp_r_entry_var)
+temp_r_entry.grid(row=4, column=2, padx=5, pady=5, sticky="w")
+tk.Label(result_frame, text="OnOfthrottle").grid(row=5, column=2, padx=5, pady=5, sticky="w")
+on_off_throttle_entry_var = tk.StringVar(value="3.0")
+on_off_throttle_entry = tk.Entry(result_frame, width=5, textvariable=on_off_throttle_entry_var)
+on_off_throttle_entry.grid(row=6, column=2, padx=5, pady=5, sticky="w")
 
 # 分割線
-ttk.Separator(result_frame, orient="horizontal").grid(row=6, column=1, sticky="ew", pady=10)
+ttk.Separator(result_frame, orient="horizontal").grid(row=7, column=1, sticky="ew", pady=10)
 # 開始日期與時間
-tk.Label(result_frame, text="資料日期:").grid(row=7, column=1, columnspan=2, padx=5, pady=5, sticky="nsew")
+tk.Label(result_frame, text="資料日期:").grid(row=8, column=1, columnspan=2, padx=5, pady=5, sticky="nsew")
 def increment_date_time(var, increment, unit):
     try:
         current_value = pd.to_datetime(var.get())
@@ -664,22 +716,23 @@ def bind_increment(widget, var, unit):
 
 
 start_date_entry = tk.Entry(result_frame, textvariable=start_date, width=10)
-start_date_entry.grid(row=8, column=1, padx=5, pady=5, sticky="w")
+start_date_entry.grid(row=9, column=1, padx=5, pady=5, sticky="w")
 bind_increment(start_date_entry, start_date, "day")
 
 start_time_entry = tk.Entry(result_frame, textvariable=start_time, width=10)
-start_time_entry.grid(row=9, column=1, padx=5, pady=5, sticky="w")
+start_time_entry.grid(row=10, column=1, padx=5, pady=5, sticky="w")
 bind_increment(start_time_entry, start_time, "hour")
 
 end_date_entry = tk.Entry(result_frame, textvariable=end_date, width=10)
-end_date_entry.grid(row=10, column=1, padx=5, pady=5, sticky="w")
+end_date_entry.grid(row=11, column=1, padx=5, pady=5, sticky="w")
 bind_increment(end_date_entry, end_date, "day")
 
 end_time_entry = tk.Entry(result_frame, textvariable=end_time, width=10)
-end_time_entry.grid(row=11, column=1, padx=5, pady=5, sticky="w")
+end_time_entry.grid(row=12, column=1, padx=5, pady=5, sticky="w")
 bind_increment(end_time_entry, end_time, "hour")
 
-fig, (ax1, ax2) = plt.subplots(2, 1, sharex=True, figsize=(8, 6), facecolor='lightgray')
+fig, (ax1, ax2) = plt.subplots(2, 1, sharex=True, figsize=(12, 8), facecolor='lightgray')
+
 canvas = FigureCanvasTkAgg(fig, master=root)
 canvas_widget = canvas.get_tk_widget()
 canvas_widget.grid(row=0, rowspan=2, column=1, padx=5, pady=5)
