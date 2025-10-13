@@ -4,7 +4,10 @@
 #Rev.2.0 新增光棒移動來設定計算範圍,將圖表改為內崁式,新增能耗計算模組
 #Rev.2.1 繪製新數據前，確保所有相關軸都被正確清除和重置
 #Rev.2.2 修正語法錯誤,圖表比例改為7:3
-#Rev.2.3 修改on/off低標,圖表尺寸加大,修正效率基準百分比分母,計算結果增加最大最小值
+#Rev.2.3 修改on/off低標,圖表尺寸加大,修正效率基準百分比分母
+#Rev.2.3.1 修正On/Off低標計算加1分鐘
+#Rev.2.4 修正2027容許耗用能源基準計算公式 型式改用有效內容積來判定
+#Rev.2.4.1 修正能耗標準值以K=1.78代入,實測EF值以實測庫溫來計算K值後代入
 #-------------------------------------------------------------------------------
 # 
 import tkinter as tk
@@ -74,16 +77,23 @@ class EnergyCalculator:
             包含所有計算結果的字典
         """
         results = {}
+        # 1. 計算標準K值 (溫度係數)
+        #Rev.2.4.1 K值分為標準K和實測K
+        standard_K = 1.78
+        measured_K = self.calculate_K_value(freezer_temp, fridge_temp)
+        #print(f"標準K值: {standard_K}, 實測K值: {measured_K}")
         
-        # 1. 計算K值 (溫度係數)
-        K = self.calculate_K_value(freezer_temp, fridge_temp)
-        #print(f"K值: {K}")
-        # 2. 計算等效內容積
-        equivalent_volume = self.calculate_equivalent_volume(VR, VF, K)
+        # 2. 計算等效內容積,有效內容積
+        #Rev.2.4.1 等效內容積計算分為標準公式用標準K值,實測公式用實測K值
+        equivalent_volume = self.calculate_equivalent_volume(VR, VF, standard_K)
+        measured_equivalent_volume = self.calculate_equivalent_volume(VR, VF, measured_K)
+        effective_volume = VR + VF
         
+        #Rev.2.4 修正2027容許耗用能源基準計算公式 型式改用有效內容積來判定
         # 3. 確定冰箱型式
-        fridge_type = self.determine_fridge_type(equivalent_volume, VR, VF, fan_type)
+        fridge_type = self.determine_fridge_type(effective_volume, VR, VF, fan_type)
         #print(f"冰箱型式: {fridge_type}")
+        
         # 4. 計算容許耗用能源基準 (每月)
         energy_allowance = self.calculate_energy_allowance(equivalent_volume, fridge_type)
         
@@ -97,10 +107,11 @@ class EnergyCalculator:
         future_benchmark_consumption = self.calculate_future_benchmark_consumption(equivalent_volume, future_energy_allowance)
         
         # 8. 計算實測月耗電量
-        monthly_consumption = round(daily_consumption * 30,1)
+        monthly_consumption = round(daily_consumption * 30,3)
         
         # 9. 計算EF值 (能效因子)
-        ef_value = round(equivalent_volume / monthly_consumption,1)
+        #Rev.2.4.1 實測用實測等效內容積
+        ef_value = round(measured_equivalent_volume / monthly_consumption,1)
         
         # 9.1 計算現有效率基準百分比和等級
         current_ef_thresholds = self.current_ef_thresholds(energy_allowance, fridge_type)
@@ -118,10 +129,11 @@ class EnergyCalculator:
         results.update({
             '冷凍室溫度(°C)': freezer_temp,
             '冷藏室溫度(°C)': fridge_temp,
-            'K值': K,
+            '實測K值': measured_K,
             'VF(L)': VF,
             'VR(L)': VR,
             '等效內容積(L)': equivalent_volume,
+            '實測等效內容積(L)': measured_equivalent_volume,
             '冰箱型式': fridge_type,
             '容許耗用能源基準(L/kWh/月)': energy_allowance,
             '2027容許耗用能源基準(L/kWh/月)': future_energy_allowance,
@@ -446,7 +458,7 @@ def calculate_statistics():
             # 計算啟停周期次數
             power_cycles = int(filtered_df['power_on'].astype(int).diff().fillna(0).abs().sum() // 2)
 
-            # 計算大於等於3W和小於3W的週期數，排除頭尾兩個周期
+            # 計算大於等於power_throttle和小於power_throttle的週期數，排除頭尾兩個周期
             mask = filtered_df['power_on']
             groups = (mask != mask.shift()).cumsum()
             segments = pd.DataFrame({
@@ -462,7 +474,7 @@ def calculate_statistics():
             # 計算每個區段的持續時間
             segments['持續時間'] = (segments[('時間', 'max')] - segments[('時間', 'min')]).dt.total_seconds()
 
-            # 分別計算大於等於3W和小於3W的週期數與平均時間
+            # 分別計算大於等於power_throttle和小於power_throttle的週期數與平均時間
             above_segments = segments[segments['狀態']]
             below_segments = segments[~segments['狀態']]
 
@@ -470,7 +482,7 @@ def calculate_statistics():
             below_count = len(below_segments)
 
             above_avg_time = (above_segments['持續時間'].mean() / 60) if above_count > 0 else 0
-            below_avg_time = (below_segments['持續時間'].mean() / 60) if below_count > 0 else 0
+            below_avg_time = ((below_segments['持續時間'].mean() / 60) + 1) if below_count > 0 else 0 #Rev.2.3.1 修正On/Off低標計算加1分鐘
 
             # 計算百分比
             if above_avg_time + below_avg_time > 0:
@@ -621,7 +633,7 @@ rcParams['figure.titlesize'] = 12    # 圖形標題字體大小
 
 # 初始化主視窗
 root = tk.Tk()
-root.title("CSV Plotter with Statistics 2.3")
+root.title("CSV Plotter with Statistics 2.4.1")
 root.iconbitmap(resource_path('favicon.ico'))
 
 # 全域變數
@@ -634,7 +646,7 @@ end_time = tk.StringVar()
 
 # GUI 元件
 main_frame = tk.Frame(root)  # 使用 Frame 包含文字框
-main_frame.grid(row=0, column=0, padx=5, pady=10)
+main_frame.grid(row=0, column=0, padx=5, pady=5)
 tk.Label(main_frame, text="CSV 檔案路徑:").grid(row=0, column=0, padx=5, pady=5, sticky="e")
 tk.Entry(main_frame, textvariable=csv_path, width=50).grid(row=0, column=1, padx=5, pady=5)
 tk.Button(main_frame, text="選擇檔案", command=select_file).grid(row=0, column=2, padx=5, pady=5)
@@ -648,13 +660,13 @@ tk.Button(main_frame, text="儲存結果", command=save_results).grid(row=4, col
 
 # 多行文字框顯示結果
 result_frame = tk.Frame(root)  # 使用 Frame 包含文字框
-result_frame.grid(row=1, column=0, padx=5, pady=10)
+result_frame.grid(row=1, column=0, padx=5, pady=5)
 # 
 # 創建多行文字框
 result_textbox = tk.Text(
     result_frame, 
     width=50, 
-    height=30, 
+    height=50, 
     wrap=tk.WORD  # 自動換行
 )
 result_textbox.grid(row=0, rowspan=13, column=0, padx=5, pady=5)
@@ -664,27 +676,25 @@ tk.Label(result_frame, text="能耗計算用:").grid(row=0, column=1, columnspan
 tk.Label(result_frame, text="冷凍室容積(L):").grid(row=1, column=1, padx=5, pady=5, sticky="w")
 vf_entry_var = tk.StringVar(value="150")
 vf_entry = tk.Entry(result_frame, width=5, textvariable=vf_entry_var)
-vf_entry.grid(row=2, column=1, padx=5, pady=5, sticky="w")
-tk.Label(result_frame, text="F:").grid(row=1, column=2, padx=5, pady=5, sticky="w")
-temp_f_entry_var = tk.StringVar(value="-18.0")
-temp_f_entry = tk.Entry(result_frame, width=5, textvariable=temp_f_entry_var)
-temp_f_entry.grid(row=2, column=2, padx=5, pady=5, sticky="w")
-tk.Label(result_frame, text="冷藏室容積(L):").grid(row=3, column=1, padx=5, pady=5, sticky="w")
+vf_entry.grid(row=1, column=2, padx=5, pady=5, sticky="w")
+tk.Label(result_frame, text="冷藏室容積(L):").grid(row=2, column=1, padx=5, pady=5, sticky="w")
 vr_entry_var = tk.StringVar(value="350")
 vr_entry = tk.Entry(result_frame, width=5, textvariable=vr_entry_var)
-vr_entry.grid(row=4, column=1, padx=5, pady=5, sticky="w")
-tk.Label(result_frame, text="R:").grid(row=3, column=2, padx=5, pady=5, sticky="w")
+vr_entry.grid(row=2, column=2, padx=5, pady=5, sticky="w")
+tk.Label(result_frame, text="F:").grid(row=3, column=1, padx=5, pady=5, sticky="w")
+temp_f_entry_var = tk.StringVar(value="-18.0")
+temp_f_entry = tk.Entry(result_frame, width=5, textvariable=temp_f_entry_var)
+temp_f_entry.grid(row=3, column=2, padx=5, pady=5, sticky="w")
+
+tk.Label(result_frame, text="R:").grid(row=4, column=1, padx=5, pady=5, sticky="w")
 temp_r_entry_var = tk.StringVar(value="3.0")
 temp_r_entry = tk.Entry(result_frame, width=5, textvariable=temp_r_entry_var)
 temp_r_entry.grid(row=4, column=2, padx=5, pady=5, sticky="w")
 fan_type_var = tk.IntVar(value=1)  # 0: unchecked, 1: checked
 fan_type_checkbox = tk.Checkbutton(result_frame, text="風扇式", variable=fan_type_var)
 fan_type_checkbox.grid(row=5, column=1, padx=5, pady=5, sticky="w")
-tk.Label(result_frame, text="R:").grid(row=3, column=2, padx=5, pady=5, sticky="w")
-temp_r_entry_var = tk.StringVar(value="3.0")
-temp_r_entry = tk.Entry(result_frame, width=5, textvariable=temp_r_entry_var)
-temp_r_entry.grid(row=4, column=2, padx=5, pady=5, sticky="w")
-tk.Label(result_frame, text="OnOfthrottle").grid(row=5, column=2, padx=5, pady=5, sticky="w")
+
+tk.Label(result_frame, text="OnOfthrottle").grid(row=6, column=1, padx=5, pady=5, sticky="w")
 on_off_throttle_entry_var = tk.StringVar(value="3.0")
 on_off_throttle_entry = tk.Entry(result_frame, width=5, textvariable=on_off_throttle_entry_var)
 on_off_throttle_entry.grid(row=6, column=2, padx=5, pady=5, sticky="w")
