@@ -5,7 +5,8 @@
 #-------------------------------------------------------------------------------
 #Rev.0.1 initial
 #Rev.0.1.0.1 delete '日期' from xls and csv file once import to df
-#Rev.0.2.0.0 26/2/9 更正原數據筆數間隔非10秒整,能耗計算需先計算1min平均,再累積WH值
+#Rev.0.2.0.0 26/2/9 更正原數據筆數間隔非10秒整,能耗計算需先計算1min平均,再累積WH值;以tab20色盤作為溫度線避免重複
+#Rev.0.2.0.1 26/4/8 調整能耗計算小數位,以及因為python 四捨五入的誤差
 #-------------------------------------------------------------------------------
 # 
 import tkinter as tk
@@ -105,7 +106,7 @@ class EnergyCalculator:
         future_benchmark_consumption = self.calculate_future_benchmark_consumption(equivalent_volume, future_energy_allowance)
         
         # 8. 計算實測月耗電量
-        monthly_consumption = int(daily_consumption * 30)
+        monthly_consumption = round(daily_consumption * 30,0)
         
         # 9. 計算EF值 (能效因子)
         #Rev.2.4.1 實測用實測等效內容積
@@ -135,13 +136,13 @@ class EnergyCalculator:
             '冰箱型式': fridge_type,
             '2018容許耗用能源基準(L/kWh/月)': energy_allowance,
             '2027容許耗用能源基準(L/kWh/月)': future_energy_allowance,
-            '2018耗電量基準(kWh/月)': benchmark_consumption,
-            '2027耗電量基準(kWh/月)': future_benchmark_consumption,
-            '實測月耗電量(kWh/月)': monthly_consumption,
+            '2018耗電量基準(kWh/月)': int(benchmark_consumption),
+            '2027耗電量基準(kWh/月)': int(future_benchmark_consumption),
+            '實測月耗電量(kWh/月)': int(monthly_consumption),
             '實測EF值': ef_value,
-            '2018效率基準百分比(%)': current_percent,
+            '2018效率基準百分比(%)': int(current_percent),
             '2018效率等級': current_grade,
-            '2027新效率基準百分比(%)': future_percent,
+            '2027新效率基準百分比(%)': int(future_percent),
             '2027新效率等級': future_grade
         })
         
@@ -155,7 +156,7 @@ class EnergyCalculator:
     
     def calculate_equivalent_volume(self, VR, VF, K):
         """計算等效內容積"""
-        return int(VR + (K * VF))
+        return round(VR + (K * VF),1)
     
     def determine_fridge_type(self, equivalent_volume, VR, VF, fan_type):
         """確定冰箱型式"""
@@ -201,32 +202,32 @@ class EnergyCalculator:
 
     def calculate_benchmark_consumption(self, equivalent_volume, energy_allowance):
         """計算耗電量基準"""
-        return int(equivalent_volume / energy_allowance)
+        return round(equivalent_volume / energy_allowance,0)
     
     def calculate_future_benchmark_consumption(self, equivalent_volume, future_energy_allowance):
         """計算2027耗電量基準"""
-        return int(equivalent_volume / future_energy_allowance)
+        return round(equivalent_volume / future_energy_allowance,0)
     
     def calculate_current_efficiency(self, ef_value, thresholds):
         # 確定等級
         if ef_value >= thresholds[0]:
             grade = "1級"
-            final_percent = round(ef_value / thresholds[0] * 100, 1)
+            final_percent = round(ef_value / thresholds[0] * 100, 0)
         elif ef_value >= thresholds[0] * 0.95:
             grade = "1*級"
-            final_percent = round(ef_value / thresholds[0] * 100, 1)
+            final_percent = round(ef_value / thresholds[0] * 100, 0)
         elif ef_value >= thresholds[1]:
             grade = "2級"
-            final_percent = round(ef_value / thresholds[0] * 100, 1)
+            final_percent = round(ef_value / thresholds[0] * 100, 0)
         elif ef_value >= thresholds[2]:
             grade = "3級"
-            final_percent = round(ef_value / thresholds[0] * 100, 1)
+            final_percent = round(ef_value / thresholds[0] * 100, 0)
         elif ef_value >= thresholds[3]:
             grade = "4級"
-            final_percent = round(ef_value / thresholds[0] * 100, 1)
+            final_percent = round(ef_value / thresholds[0] * 100, 0)
         else :
             grade = "5級"
-            final_percent = round(ef_value / thresholds[0] * 100, 1)
+            final_percent = round(ef_value / thresholds[0] * 100, 0)
         
         return final_percent, grade
     
@@ -234,22 +235,22 @@ class EnergyCalculator:
         # 確定等級
         if ef_value >= thresholds[0]:
             grade = "1級"
-            final_percent = round(ef_value / thresholds[0] * 100, 1)
+            final_percent = round(ef_value / thresholds[0] * 100, 0)
         elif ef_value >= thresholds[0] * 0.95:
             grade = "1*級"
-            final_percent = round(ef_value / thresholds[0] * 100, 1)
+            final_percent = round(ef_value / thresholds[0] * 100, 0)
         elif ef_value >= thresholds[1]:
             grade = "2級"
-            final_percent = round(ef_value / thresholds[0] * 100, 1)
+            final_percent = round(ef_value / thresholds[0] * 100, 0)
         elif ef_value >= thresholds[2]:
             grade = "3級"
-            final_percent = round(ef_value / thresholds[0] * 100, 1)
+            final_percent = round(ef_value / thresholds[0] * 100, 0)
         elif ef_value >= thresholds[3]:
             grade = "4級"
-            final_percent = round(ef_value / thresholds[0] * 100, 1)
+            final_percent = round(ef_value / thresholds[0] * 100, 0)
         else :
             grade = "5級"
-            final_percent = round(ef_value / thresholds[0] * 100, 1)
+            final_percent = round(ef_value / thresholds[0] * 100, 0)
         
         return final_percent, grade
 
@@ -345,10 +346,14 @@ def plot_chart():
         #print(df_temp)
         # 繪製圖表
         fig.suptitle(chart_title.get())
+
+        # 取得 20 個不同顏色
+        colors = plt.cm.tab20.colors   # 固定 20 色
         
-        # 繪製溫度資料
-        for col in temp_columns:
-            ax1.plot(df_temp['datetime'], df_temp[col], label=col)
+        # 繪製溫度資料（依序使用 colors 顏色）
+        for idx, col in enumerate(temp_columns):
+            color = colors[idx % len(colors)]
+            ax1.plot(df_temp['datetime'], df_temp[col], label=col, color=color)
         ax1.set_ylabel("溫度")
 
         ax1.legend(temp_columns, loc='upper left')
