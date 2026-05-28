@@ -8,11 +8,14 @@
 #Rev.0.2.0.0 26/2/9 更正原數據筆數間隔非10秒整,能耗計算需先計算1min平均,再累積WH值;以tab20色盤作為溫度線避免重複
 #Rev.0.2.0.1 26/4/8 調整能耗計算小數位,以及因為python 四捨五入的誤差
 #Rev.0.3.0.0 26/4/8 UI響應式重構，支援螢幕尺寸自適應
+#Rev.0.3.0.1 26/4/22 修正效率比小數位1位數
+#Rev.0.4.0.0 26/4/29 整合突波清洗功能，讀取xls時自動執行MAD突波偵測+物理範圍限制
 #------------------------------------------------------------------------------
 #
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from matplotlib.ticker import MaxNLocator
@@ -27,6 +30,32 @@ def resource_path(relative_path):
     if hasattr(sys, '_MEIPASS'):
         return os.path.join(getattr(sys, '_MEIPASS'), relative_path)
     return os.path.join(os.path.abspath('.'), relative_path)
+
+
+PHYSICAL_LIMIT = 40  # 物理範圍上限（-40 ~ +40）
+
+def clean_spike(df):
+    """
+    對 DataFrame 套用突波清洗（滾動中位數+MAD偵測 + 物理範圍限制）
+    適用於 datetime 已設為 index 的資料
+    """
+    exclude_cols = {'V', 'I', 'W'}
+    all_numeric = df.select_dtypes(include=['number']).columns.tolist()
+    target_cols = [c for c in all_numeric if c not in exclude_cols]
+    df = df.interpolate(method='linear')
+    for col in target_cols:
+        series = df[col]
+        rolling_med = series.rolling(window=7, center=True, min_periods=1).median()
+        residual = series - rolling_med
+        mad = residual.abs().rolling(window=7, center=True, min_periods=1).median() * 1.4826
+        mad = mad.replace(0, 1e-6)
+        z_score = residual.abs() / mad
+        is_spike = (z_score > 3.5) & (residual.abs() > 3.0)
+        is_spike = is_spike | (series > PHYSICAL_LIMIT) | (series < -PHYSICAL_LIMIT)
+        df[col] = df[col].mask(is_spike, rolling_med)
+        df[col] = df[col].clip(lower=-PHYSICAL_LIMIT, upper=PHYSICAL_LIMIT)
+    df = df.interpolate(method='linear')
+    return df
 
 
 # ============================================================================
@@ -95,9 +124,9 @@ class EnergyCalculator:
             '2027耗電量基準(kWh/月)': int(future_benchmark_consumption),
             '實測月耗電量(kWh/月)': int(monthly_consumption),
             '實測EF值': ef_value,
-            '2018效率基準百分比(%)': int(current_percent),
+            '2018效率基準百分比(%)': current_percent,
             '2018效率等級': current_grade,
-            '2027新效率基準百分比(%)': int(future_percent),
+            '2027新效率基準百分比(%)': future_percent,
             '2027新效率等級': future_grade
         })
         return results
@@ -153,22 +182,22 @@ class EnergyCalculator:
     def calculate_current_efficiency(self, ef_value, thresholds):
         if ef_value >= thresholds[0]:
             grade = "1級"
-            final_percent = round(ef_value / thresholds[0] * 100, 0)
+            final_percent = round(ef_value / thresholds[0] * 100, 1)
         elif ef_value >= thresholds[0] * 0.95:
             grade = "1*級"
-            final_percent = round(ef_value / thresholds[0] * 100, 0)
+            final_percent = round(ef_value / thresholds[0] * 100, 1)
         elif ef_value >= thresholds[1]:
             grade = "2級"
-            final_percent = round(ef_value / thresholds[0] * 100, 0)
+            final_percent = round(ef_value / thresholds[0] * 100, 1)
         elif ef_value >= thresholds[2]:
             grade = "3級"
-            final_percent = round(ef_value / thresholds[0] * 100, 0)
+            final_percent = round(ef_value / thresholds[0] * 100, 1)
         elif ef_value >= thresholds[3]:
             grade = "4級"
-            final_percent = round(ef_value / thresholds[0] * 100, 0)
+            final_percent = round(ef_value / thresholds[0] * 100, 1)
         else:
             grade = "5級"
-            final_percent = round(ef_value / thresholds[0] * 100, 0)
+            final_percent = round(ef_value / thresholds[0] * 100, 1)
         return final_percent, grade
 
     def calculate_future_efficiency(self, ef_value, thresholds):
@@ -222,9 +251,6 @@ class DraggableLine:
             self.time_var.set(dt.strftime('%H:%M:%S'))
 
 
-# ============================================================================
-# 視窗尺寸響應式工具
-# ============================================================================
 def get_fig_size(screen_w, screen_h):
     """根據螢幕尺寸計算 figure 大小（英吋）"""
     # 圖表區域：右側，寬度約 70% 螢幕 width，高度約 85% 螢幕 height
@@ -513,6 +539,7 @@ def select_file():
             df = df.set_index('datetime')
             df = df.resample('1min').mean(numeric_only=True)
             df = df.round(1)
+            df = clean_spike(df)  # 突波清洗
             df = df.reset_index()
 
             output_dir = os.path.dirname(file_path)
@@ -626,7 +653,7 @@ rcParams['legend.fontsize'] = 8
 rcParams['figure.titlesize'] = 12
 
 root = tk.Tk()
-root.title("Plotter with Statistics for access 97 0.3 (響應式)")
+root.title("Plotter with Statistics for access 97 0.4 (突波清洗)")
 
 # 取得螢幕尺寸
 screen_w = root.winfo_screenwidth()
